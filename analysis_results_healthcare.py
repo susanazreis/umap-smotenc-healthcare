@@ -51,12 +51,22 @@ print("Done merging.\n")
 
 
 # ── Helper: filter to datasets where TVAE ran ─────────────────────────────────
-def files_with_tvae(result_files):
-    """Return only files that contain at least one TVAE row."""
-    return [
-        f for f in result_files
-        if 'tvae' in pd.read_csv(f)['Generator'].unique()
-    ]
+def files_with_tvae(result_files, min_runs=10):
+    """
+    Return only files where TVAE has sufficient runs.
+    """
+    valid = []
+    for f in result_files:
+        df = pd.read_csv(f)
+        tvae_rows = df[df['Generator'] == 'tvae']
+        if len(tvae_rows) == 0:
+            continue
+        tvae_combos = tvae_rows.groupby(['Seed', 'fold']).ngroups
+        if tvae_combos >= min_runs:
+            valid.append(f)
+        else:
+            print(f"Excluding {f} from TVAE analysis — only {tvae_combos} seed/fold combinations")
+    return valid
 
 
 # ── Core aggregation function ─────────────────────────────────────────────────
@@ -229,6 +239,9 @@ def wilcoxon_privacy(result_files):
     privacy_cols = ["Mean_Knn", "Mean_Ratio_Knn", "Mean_Ratio_10Knn"]
 
     all_data = pd.concat([pd.read_csv(f) for f in result_files])
+
+    all_data = all_data[~((all_data['dataset'] == 'bcwp_50') & (all_data['Generator'] == 'tvae'))]
+    
     for col in privacy_cols:
         all_data[col] = pd.to_numeric(all_data[col], errors='coerce')
 
@@ -279,7 +292,10 @@ def wilcoxon_utility(result_files):
     from UMAP-SMOTENC per classifier — equivalent to original paper's Table 5.
     """
     all_data = pd.concat([pd.read_csv(f) for f in result_files])
+    all_data = all_data[~((all_data['dataset'] == 'bcwp_50') & (all_data['Generator'] == 'tvae'))]
+
     all_data['mean_test_score'] = pd.to_numeric(all_data['mean_test_score'], errors='coerce')
+    
 
     print("=" * 60)
     print("WILCOXON SIGNED-RANK TEST — ML UTILITY (F1) PER CLASSIFIER")
@@ -438,6 +454,24 @@ def print_utility_by_model(result_files, dataset_names):
             .max().unstack().round(3)
         )
 
+def print_privacy_metrics(result_files, dataset_names):
+    print("=" * 60)
+    print("RAW PRIVACY METRICS (Mean KNN + Duplicates)")
+    print("=" * 60)
+    for name, file in zip(dataset_names, result_files):
+        data = pd.read_csv(file)
+        print(f"\n--- {name} ---")
+        print(
+            data.groupby('Generator')[['Mean_Knn', 'Duplicates']]
+            .mean().round(3).to_string()
+        )
+    print("\n--- Averaged across all datasets ---")
+    all_data = pd.concat([pd.read_csv(f) for f in result_files])
+    print(
+        all_data.groupby('Generator')[['Mean_Knn', 'Duplicates']]
+        .mean().round(3).to_string()
+    )
+
 
 def save_results(result_files, dataset_names, output_file='analysis_results.txt'):
     cols, stds, means = aggregate_healthcare(result_files)
@@ -527,13 +561,13 @@ def save_global_results(result_files, label, output_file):
         f.write(combined_std[["Trade-off", "Privacy", "ML-Utility"]].round(3).to_string())
         f.write("\n\n")
 
-        # ── Raw privacy metrics ────────────────────────────────────────────────
+        # ── Raw privacy metrics ────────────────────────────────────────────────────
         f.write("=" * 60 + "\n")
         f.write("RAW PRIVACY METRICS (averaged across datasets)\n")
         f.write("=" * 60 + "\n")
         f.write(
             all_data.groupby('Generator')[
-                ['Mean_Knn', 'Mean_Ratio_Knn', 'Mean_Ratio_10Knn']
+                ['Mean_Knn', 'Mean_Ratio_Knn', 'Mean_Ratio_10Knn', 'Duplicates']  # ← add Duplicates
             ].mean().round(3).to_string()
         )
         f.write("\n\n")
@@ -635,6 +669,7 @@ for group_name, config in dataset_groups.items():
 
     print_results(config['files'], config['names'])
     print_utility_by_model(config['files'], config['names'])
+    print_privacy_metrics(config['files'], config['names'])  # ← correct place
     plot_results(config['files'], config['names'], output_file=config['plot'])
     save_results(config['files'], config['names'], output_file=config['output'])
 
@@ -663,6 +698,7 @@ print(f"GLOBAL RESULTS — ALL {len(all_files)} DATASETS")
 print("=" * 60)
 print_results(all_files, all_names)
 print_utility_by_model(all_files, all_names)
+print_privacy_metrics(all_files, all_names)
 plot_results(
     all_files, all_names,
     output_file=f"results/global/global_{len(all_files)}_plot.png"

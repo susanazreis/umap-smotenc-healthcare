@@ -28,10 +28,8 @@ dataset_groups = {
 
 tvae_datasets = [
     'BCWD 10%', 'BCWD 25%', 'BCWD 50%',
-    'BCWP 50%',
     'BCC 10%',  'BCC 25%',  'BCC 50%',
     'PIMA 25%', 'PIMA 50%',
-    'HCV 50%',
     'ILPD 5%',  'ILPD 10%', 'ILPD 15%',
     'Parkinsons 5%', 'Parkinsons 10%', 'Parkinsons 15%',
 ]

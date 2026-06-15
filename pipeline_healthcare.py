@@ -38,6 +38,17 @@ def preprocess_default(filepath):
 
 def preprocess_hcv(filepath):
     df = pd.read_csv(filepath)
+    # Remove uncertain outcomes
+    df = df[df['Category'] != '0s=suspect Blood Donor'].copy()
+    # Map to binary — combine all positive hepatitis stages
+    df['target'] = df['Category'].map({
+        '0=Blood Donor': 0,
+        '1=Hepatitis':   1,
+        '2=Fibrosis':    1,
+        '3=Cirrhosis':   1,
+    })
+    # Drop original category and encode Sex
+    df = df.drop(columns=['Category'])
     df['Sex'] = df['Sex'].map({'m': 1, 'f': 0})
     return df.dropna().reset_index(drop=True)
 
@@ -47,9 +58,9 @@ def preprocess_ilpd(filepath):
     return df.dropna().reset_index(drop=True)
 
 datasets_config = {
-     'bcwd_10': preprocess_default('bcwd_10.csv'),
-      'bcwd_25': preprocess_default('bcwd_25.csv'),
-      'bcwd_50': preprocess_default('bcwd_50.csv'),
+    #  'bcwd_10': preprocess_default('bcwd_10.csv'),
+    #  'bcwd_25': preprocess_default('bcwd_25.csv'),
+    #  'bcwd_50': preprocess_default('bcwd_50.csv'),
     #  'bcwp_10': preprocess_default('bcwp_10.csv'),
     #  'bcwp_25': preprocess_default('bcwp_25.csv'),
     #  'bcwp_50': preprocess_default('bcwp_50.csv'),
@@ -68,9 +79,9 @@ datasets_config = {
     #  'ilpd_5':  preprocess_ilpd('ilpd_5.csv'),
     #  'ilpd_10': preprocess_ilpd('ilpd_10.csv'),
     #  'ilpd_15': preprocess_ilpd('ilpd_15.csv'),
-    #  'parkinsons_5':  preprocess_default('parkinsons_5.csv'),
-    #  'parkinsons_10': preprocess_default('parkinsons_10.csv'),
-    #  'parkinsons_15': preprocess_default('parkinsons_15.csv'),
+      'parkinsons_5':  preprocess_default('parkinsons_5.csv'),
+      'parkinsons_10': preprocess_default('parkinsons_10.csv'),
+      'parkinsons_15': preprocess_default('parkinsons_15.csv'),
 }
 
 seeds = [220, 320, 420]
