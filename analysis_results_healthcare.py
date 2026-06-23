@@ -69,6 +69,30 @@ def files_with_tvae(result_files, min_runs=10):
     return valid
 
 
+# ── Helper: strip TVAE rows entirely (for the ALL-21 "excludes TVAE" analysis) ─
+def strip_tvae(result_files, output_path='final_logs_no_tvae/'):
+    """
+    Write TVAE-free copies of each log file and return their paths.
+
+    TVAE only has complete, reliable data for 14 of the 21 datasets (the other
+    7 — BCWP 10/25/50%, PIMA 10%, HCV 10/25/50% — ran but did not converge
+    fully). By design, the ALL-21 analysis excludes TVAE entirely (it gets its
+    proper treatment in the dedicated TVAE subset below), so every consumer of
+    the ALL-21 file list — descriptive (print_results, save_global_results,
+    plot_results) and inferential (wilcoxon_*, friedman_ranks) — should see
+    data with zero TVAE rows, not a mix of complete and partial ones.
+    """
+    os.makedirs(output_path, exist_ok=True)
+    cleaned_files = []
+    for f in result_files:
+        df = pd.read_csv(f)
+        df = df[df['Generator'] != 'tvae']
+        out_path = output_path + os.path.basename(f)
+        df.to_csv(out_path, index=False)
+        cleaned_files.append(out_path)
+    return cleaned_files
+
+
 # ── Core aggregation function ─────────────────────────────────────────────────
 def aggregate_healthcare(result_files, rank=False):
 
@@ -240,8 +264,11 @@ def wilcoxon_privacy(result_files):
 
     all_data = pd.concat([pd.read_csv(f) for f in result_files])
 
-    all_data = all_data[~((all_data['dataset'] == 'bcwp_50') & (all_data['Generator'] == 'tvae'))]
-    
+    # Note: no per-dataset TVAE exclusion needed here — when called on the
+    # ALL-21 file list, TVAE rows have already been stripped entirely by
+    # strip_tvae(); when called on the TVAE subset, only fully-converged
+    # datasets are included in the first place via files_with_tvae().
+
     for col in privacy_cols:
         all_data[col] = pd.to_numeric(all_data[col], errors='coerce')
 
@@ -292,7 +319,8 @@ def wilcoxon_utility(result_files):
     from UMAP-SMOTENC per classifier — equivalent to original paper's Table 5.
     """
     all_data = pd.concat([pd.read_csv(f) for f in result_files])
-    all_data = all_data[~((all_data['dataset'] == 'bcwp_50') & (all_data['Generator'] == 'tvae'))]
+
+    # Note: no per-dataset TVAE exclusion needed here — see wilcoxon_privacy.
 
     all_data['mean_test_score'] = pd.to_numeric(all_data['mean_test_score'], errors='coerce')
     
@@ -454,6 +482,7 @@ def print_utility_by_model(result_files, dataset_names):
             .max().unstack().round(3)
         )
 
+
 def print_privacy_metrics(result_files, dataset_names):
     print("=" * 60)
     print("RAW PRIVACY METRICS (Mean KNN + Duplicates)")
@@ -471,6 +500,29 @@ def print_privacy_metrics(result_files, dataset_names):
         all_data.groupby('Generator')[['Mean_Knn', 'Duplicates']]
         .mean().round(3).to_string()
     )
+
+def compute_utility_per_classifier(result_files):
+    """
+    For each generator/classifier: select best hyperparameter per seed/fold,
+    average across seed/fold per dataset, then average across datasets.
+    Returns raw (unscaled) F1 — methodologically consistent with aggregate_healthcare.
+    """
+    per_dataset_results = []
+
+    for file in result_files:
+        data = pd.read_csv(file)
+        data['mean_test_score'] = pd.to_numeric(data['mean_test_score'], errors='coerce')
+
+        best = data.groupby(
+            ["Generator", "Model", "Seed", "fold"]
+        )['mean_test_score'].max().reset_index()
+
+        per_dataset = best.groupby(["Generator", "Model"])['mean_test_score'].mean().reset_index()
+        per_dataset_results.append(per_dataset)
+
+    combined = pd.concat(per_dataset_results)
+    final = combined.groupby(["Generator", "Model"])['mean_test_score'].mean().reset_index()
+    return final.pivot(index="Generator", columns="Model", values="mean_test_score").round(3)
 
 
 def save_results(result_files, dataset_names, output_file='analysis_results.txt'):
@@ -576,10 +628,8 @@ def save_global_results(result_files, label, output_file):
         f.write("=" * 60 + "\n")
         f.write("ML UTILITY (F1) PER CLASSIFIER (averaged across datasets)\n")
         f.write("=" * 60 + "\n")
-        f.write(
-            all_data.groupby(['Generator', 'Model'])['mean_test_score']
-            .mean().unstack().round(3).to_string()
-        )
+        utility_table = compute_utility_per_classifier(result_files)
+        f.write(utility_table.to_string())
         f.write("\n\n")
 
     print(f"Global results saved to {output_file}")
@@ -689,22 +739,25 @@ print(f"\nAll datasets      : {len(all_files)}")
 print(f"TVAE subset       : {len(tvae_files)}")
 print(f"TVAE subset files : {tvae_files}")
 
+# TVAE-free copies of all 21 logs — used for every ALL-21 "excludes TVAE" call below
+all_files_no_tvae = strip_tvae(all_files)
+
 os.makedirs('results/global', exist_ok=True)
 
 
-# ── Global results: 21 datasets ────────────────────────────────────────────────
+# ── Global results: 21 datasets (TVAE excluded by design) ────────────────────
 print("\n" + "=" * 60)
 print(f"GLOBAL RESULTS — ALL {len(all_files)} DATASETS")
 print("=" * 60)
-print_results(all_files, all_names)
-print_utility_by_model(all_files, all_names)
-print_privacy_metrics(all_files, all_names)
+print_results(all_files_no_tvae, all_names)
+print_utility_by_model(all_files_no_tvae, all_names)
+print_privacy_metrics(all_files_no_tvae, all_names)
 plot_results(
-    all_files, all_names,
+    all_files_no_tvae, all_names,
     output_file=f"results/global/global_{len(all_files)}_plot.png"
 )
 save_global_results(
-    all_files,
+    all_files_no_tvae,
     label=f"ALL {len(all_files)} DATASETS",
     output_file=f"results/global/global_{len(all_files)}_results.txt"
 )
@@ -727,15 +780,15 @@ save_global_results(
 )
 
 
-# ── Statistical tests: 21 datasets ────────────────────────────────────────────
+# ── Statistical tests: 21 datasets (TVAE excluded by design) ─────────────────
 stats_file_21 = f"results/global/statistical_tests_{len(all_files)}.txt"
 with open(stats_file_21, 'w') as f:
     original_stdout = sys.stdout
     sys.stdout = f
-    wilcoxon_tradeoff(all_files)
-    wilcoxon_utility(all_files)
-    wilcoxon_privacy(all_files)
-    friedman_ranks(all_files)
+    wilcoxon_tradeoff(all_files_no_tvae)
+    wilcoxon_utility(all_files_no_tvae)
+    wilcoxon_privacy(all_files_no_tvae)
+    friedman_ranks(all_files_no_tvae)
     sys.stdout = original_stdout
 print(f"\nStatistical tests ({len(all_files)} datasets) saved to {stats_file_21}")
 
